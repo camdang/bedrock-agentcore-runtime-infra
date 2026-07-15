@@ -1,0 +1,175 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Shared VPC + S3 Files infrastructure for AgentCore coding agents
+
+Parameters:
+  VpcId:
+    Type: String
+    Description: VPC ID
+  PrivateSubnet1:
+    Type: String
+    Description: Subnet 1
+  PrivateSubnet2:
+    Type: String
+    Description: Subnet 2
+  BucketName:
+    Type: String
+    Description: S3 bucket name (agentcore-<account-id>)
+  S3FilesPrefix:
+    Type: String
+    Default: "agents/"
+
+Resources:
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for coding agent runtimes
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          CidrIp: "10.0.0.0/16"
+          Description: NFS for S3 Files mount
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: "0.0.0.0/0"
+          Description: All outbound
+      Tags:
+        - Key: Name
+          Value: coding-agents-sg
+
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+      VersioningConfiguration:
+        Status: Enabled
+
+  S3FilesRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "s3files-${BucketName}-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: elasticfilesystem.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: s3files-bucket-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                  - s3:AbortMultipartUpload
+                  - s3:DeleteObject*
+                  - s3:GetObject*
+                  - s3:List*
+                  - s3:PutObject*
+                  - s3:ListBucketVersions
+                Resource:
+                  - !Sub "arn:aws:s3:::${BucketName}"
+                  - !Sub "arn:aws:s3:::${BucketName}/*"
+              - Sid: UseKmsKeyWithS3Files
+                Effect: Allow
+                Action:
+                  - kms:GenerateDataKey
+                  - kms:Encrypt
+                  - kms:Decrypt
+                  - kms:ReEncryptFrom
+                  - kms:ReEncryptTo
+                Condition:
+                  StringLike:
+                    kms:ViaService: !Sub "s3.${AWS::Region}.amazonaws.com"
+                    kms:EncryptionContext:aws:s3:arn:
+                      - !Sub "arn:aws:s3:::${BucketName}"
+                      - !Sub "arn:aws:s3:::${BucketName}/*"
+                Resource: !Sub "arn:aws:kms:${AWS::Region}:${AWS::AccountId}:*"
+              - Sid: EventBridgeManage
+                Effect: Allow
+                Action:
+                  - events:DeleteRule
+                  - events:DisableRule
+                  - events:EnableRule
+                  - events:PutRule
+                  - events:PutTargets
+                  - events:RemoveTargets
+                Condition:
+                  StringEquals:
+                    events:ManagedBy: elasticfilesystem.amazonaws.com
+                Resource:
+                  - "arn:aws:events:*:*:rule/DO-NOT-DELETE-S3-Files*"
+              - Sid: EventBridgeRead
+                Effect: Allow
+                Action:
+                  - events:DescribeRule
+                  - events:ListRuleNamesByTarget
+                  - events:ListRules
+                  - events:ListTargetsByRule
+                Resource:
+                  - "arn:aws:events:*:*:rule/*"
+
+  S3FilesFileSystem:
+    Type: AWS::S3Files::FileSystem
+    DependsOn: S3FilesRole
+    Properties:
+      Bucket: !Sub "arn:aws:s3:::${BucketName}"
+      Prefix: !Ref S3FilesPrefix
+      RoleArn: !GetAtt S3FilesRole.Arn
+
+  S3FilesAccessPoint:
+    Type: AWS::S3Files::AccessPoint
+    Properties:
+      FileSystemId: !Ref S3FilesFileSystem
+      PosixUser:
+        Uid: 1000
+        Gid: 1000
+      RootDirectory:
+        Path: /mnt/s3files
+        CreationPermissions:
+          OwnerUid: 1000
+          OwnerGid: 1000
+          Permissions: "755"
+
+  S3FilesMountTarget1:
+    Type: AWS::S3Files::MountTarget
+    Properties:
+      FileSystemId: !Ref S3FilesFileSystem
+      SubnetId: !Ref PrivateSubnet1
+      SecurityGroups:
+        - !Ref SecurityGroup
+
+  S3FilesMountTarget2:
+    Type: AWS::S3Files::MountTarget
+    Properties:
+      FileSystemId: !Ref S3FilesFileSystem
+      SubnetId: !Ref PrivateSubnet2
+      SecurityGroups:
+        - !Ref SecurityGroup
+
+Outputs:
+  VpcId:
+    Value: !Ref VpcId
+  PrivateSubnet1Id:
+    Value: !Ref PrivateSubnet1
+  PrivateSubnet2Id:
+    Value: !Ref PrivateSubnet2
+  SecurityGroupId:
+    Value: !Ref SecurityGroup
+  S3BucketName:
+    Value: !Ref S3Bucket
+  S3FilesFileSystemId:
+    Value: !Ref S3FilesFileSystem
+  S3FilesAccessPointId:
+    Value: !Ref S3FilesAccessPoint
+  S3FilesAccessPointArn:
+    Value: !GetAtt S3FilesAccessPoint.AccessPointArn
+  S3FilesRoleArn:
+    Value: !GetAtt S3FilesRole.Arn
