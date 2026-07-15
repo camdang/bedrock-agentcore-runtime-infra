@@ -4,12 +4,13 @@
 set -euo pipefail
 
 REGION="${AWS_REGION:-us-east-1}"
-STACK_NAME="coding-agents-cdang-infra"
+PROJECT_NAME="coding-agents-cdang"
+STACK_NAME="${PROJECT_NAME}-infra"
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 VPC_ID="${AWS_VPC_ID:}"  #set or export AWS_VPC_ID with value of VPC ID
 SUBNET1="${AWS_SUBNET1:}" #set or export AWS_SUBNET1 with value of private subnet 1
 SUBNET2="${AWS_SUBNET2:}" #set or export AWS_SUBNET2 with value of private subnet 2
-BUCKET_NAME="${STACK_NAME}-${ACCOUNT_ID}-${REGION}"
+BUCKET_NAME="${PROJECT_NAME}-${ACCOUNT_ID}-${REGION}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "=============================================="
